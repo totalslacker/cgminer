@@ -1535,6 +1535,9 @@ static char *opt_verusage_and_exit(const char *extra)
 #ifdef USE_MODMINER
 		"modminer "
 #endif
+#ifdef USE_BITMINE_A1
+		"Bitmine.A1 "
+#endif
 		"mining support.\n"
 		, packagename);
 	printf("%s", opt_usage(opt_argv0, extra));
