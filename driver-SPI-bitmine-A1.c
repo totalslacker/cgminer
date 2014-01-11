@@ -63,6 +63,14 @@ static struct work *wq_dequeue(struct work_queue *wq)
 }
 
 /********** chip and chain context structures */
+/*
+ * if not cooled sufficiently, communication fails and chip is temporary
+ * disabled. we let it inactive for 10 seconds to cool down
+ *
+ * TODO: to be removed after bring up / test phase
+ */
+#define COOLDOWN_MS (10 * 1000)
+
 struct A1_chip {
 	int num_cores;
 	int last_queued_id;
@@ -72,6 +80,9 @@ struct A1_chip {
 	int stales;
 	int nonces_found;
 	int nonce_ranges_done;
+
+	/* systime in ms when chip was disabled */
+	int cooldown_begin;
 };
 
 struct A1_chain {
@@ -221,6 +232,59 @@ static bool is_busy(struct A1_chain *a1, uint8_t chip)
 	return (a1->spi_rx[5] & 0x01) == 0x01;
 }
 
+
+/********** disable / re-enable related section (temporary for testing) */
+static int get_current_ms(void)
+{
+	cgtimer_t ct;
+	cgtimer_time(&ct);
+	return cgtimer_to_ms(&ct);
+}
+
+static bool is_chip_disabled(struct A1_chain *a1, uint8_t chip_id)
+{
+	struct A1_chip *chip = &a1->chips[chip_id - 1];
+	return chip->cooldown_begin != 0;
+}
+
+/* check and disable chip, remember time */
+static void disable_chip(struct A1_chain *a1, uint8_t chip_id)
+{
+	struct A1_chip *chip = &a1->chips[chip_id - 1];
+	if (is_chip_disabled(a1, chip_id)) {
+		applog(LOG_WARNING, "Chip %d already disabled", chip_id);
+		return;
+	}
+	if (cmd_READ_REG(a1, chip_id)) {
+		applog(LOG_WARNING, "Chip %d is working, not going to disable",
+		       chip_id);
+		return;
+	}
+	applog(LOG_WARNING, "Disabling chip %d", chip_id);
+	chip->cooldown_begin = get_current_ms();
+}
+
+/* check if disabled chips can be re-enabled */
+void check_disabled_chips(struct A1_chain *a1)
+{
+	int i;
+	for (i = 0; i < a1->num_chips; i++) {
+		int chip_id = i + 1;
+		struct A1_chip *chip = &a1->chips[i];
+		if (!is_chip_disabled(a1, chip_id))
+			continue;
+		if (chip->cooldown_begin + COOLDOWN_MS > get_current_ms())
+			continue;
+		if (!cmd_READ_REG(a1, chip_id)) {
+			applog(LOG_WARNING, "Chip %d not yet working", chip_id);
+			/* restart cooldown period */
+			chip->cooldown_begin = get_current_ms();
+			continue;
+		}
+		applog(LOG_WARNING, "Chip %d is working again", chip_id);
+		chip->cooldown_begin = 0;
+	}
+}
 
 /********** job creation and result evaluation */
 static uint8_t *create_job(uint8_t chip_id, uint8_t job_id,
@@ -513,6 +577,7 @@ static int64_t A1_scanwork(struct thr_info *thr)
 		if (!cmd_READ_REG(a1, i + 1)) {
 			applog(LOG_ERR, "Failed to read reg from chip %d", i);
 			// TODO: what to do now?
+			disable_chip(a1, i + 1);
 			continue;
 		}
 		hexdump("A1 RX", a1->spi_rx, 8);
@@ -535,6 +600,7 @@ static int64_t A1_scanwork(struct thr_info *thr)
 		if (!cmd_READ_REG(a1, i + 1)) {
 			applog(LOG_ERR, "Failed to read reg from chip %d", i);
 			// TODO: what to do now?
+			disable_chip(a1, i + 1);
 			continue;
 		}
 		hexdump("A1 RX", a1->spi_rx, 8);
@@ -554,6 +620,7 @@ static int64_t A1_scanwork(struct thr_info *thr)
 			       chip->hw_errors, chip->stales);
 		}
 	}
+	check_disabled_chips(a1);
 	mutex_unlock(&a1->lock);
 
 	if (nonce_ranges_processed < 0) {
