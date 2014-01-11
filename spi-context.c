@@ -16,6 +16,7 @@
 
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <assert.h>
 
 struct spi_ctx *spi_init(struct spi_config *config)
 {
@@ -45,11 +46,7 @@ struct spi_ctx *spi_init(struct spi_config *config)
 	}
 
 	ctx = malloc(sizeof(*ctx));
-	if (ctx == NULL) {
-		applog(LOG_ERR, "SPI: can't allocate SPI context");
-		close(fd);
-		return NULL;
-	}
+	assert(ctx != NULL);
 
 	ctx->fd = fd;
 	ctx->config = *config;

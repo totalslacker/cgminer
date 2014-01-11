@@ -19,7 +19,7 @@
 #include "spi-context.h"
 #include "logging.h"
 #include "miner.h"
-
+#include "util.h"
 
 /********** work queue */
 struct work_ent {
@@ -37,8 +37,8 @@ static bool wq_enqueue(struct work_queue *wq, struct work *work)
 	if (work == NULL)
 		return false;
 	struct work_ent *we = malloc(sizeof(*we));
-	if (we == NULL)
-		return false;
+	assert(we != NULL);
+
 	we->work = work;
 	INIT_LIST_HEAD(&we->head);
 	list_add_tail(&we->head, &wq->head);
@@ -366,15 +366,14 @@ void exit_A1_chain(struct A1_chain *a1)
 	free(a1);
 }
 
+
 struct A1_chain *init_A1_chain(struct spi_ctx *ctx)
 {
 	int i;
 	struct A1_chain *a1 = malloc(sizeof(*a1));
+	assert(a1 != NULL);
+
 	applog(LOG_DEBUG, "A1 init chain");
-	if (a1 == NULL) {
-		applog(LOG_ERR, "A1_chain allocation error");
-		goto failure;
-	}
 	memset(a1, 0, sizeof(*a1));
 	a1->spi_ctx = ctx;
 
@@ -430,16 +429,14 @@ static bool A1_detect_one_chain(struct spi_config *cfg)
 
 	if (ctx == NULL)
 		return false;
+
 	struct A1_chain *a1 = init_A1_chain(ctx);
 	if (a1 == NULL)
 		return false;
 
 	cgpu = malloc(sizeof(*cgpu));
-	if (cgpu == NULL) {
-		applog(LOG_ERR, "cgpu allocation error");
-		exit_A1_chain(a1);
-		return false;
-	}
+	assert(cgpu != NULL);
+
 	memset(cgpu, 0, sizeof(*cgpu));
 	cgpu->drv = &bitmineA1_drv;
 	cgpu->name = "BitmineA1";
