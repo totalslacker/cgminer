@@ -52,6 +52,9 @@ come up as BF1, along with the Bi*fury USB devices which come up as BXF.
 Bitfury USB devices are also set up as per the USB ASICs below.
 
 
+Bitmine A1 devices
+Bitmine A1 devices need the --enable-bitmine_A1 compile option set.
+
 ---
 GETTING STARTED WITH USB ASICS
 
@@ -335,6 +338,19 @@ ext recommends a clock of 80 to 230, with a default of 200
 
 voltage must be one of 650, 750, 850 or 950 with a default of 850
 
+
+
+BITMINE A1 Devices
+
+--bitmine-a1-options <ref_clk>:<sys_clk>:<spi_clk>:<max_chip>
+ref_clk:  reference clock in kHz                      (default: 16000)
+sys_clk:  target system clock in kHz to be set in PLL (default: 250000)
+spi_clk:  SPI clock in kHz                            (default: 800)
+max_chip: [debug/testing] limit chip chain
+
+Set 0 for fields you want to keep untouched to default, e.g.
+--bitmine-a1-options 0:0:400
+to only set SPI clock to 400kHz
 
 ---
 

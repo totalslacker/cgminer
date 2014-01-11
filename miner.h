@@ -959,6 +959,9 @@ extern char *opt_klondike_options;
 #ifdef USE_DRILLBIT
 extern char *opt_drillbit_options;
 #endif
+#ifdef USE_BITMINE_A1
+extern char *opt_bitmine_a1_options;
+#endif
 #ifdef USE_USBUTILS
 extern char *opt_usb_select;
 extern int opt_usbdump;

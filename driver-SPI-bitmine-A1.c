@@ -120,6 +120,27 @@ enum A1_command {
 	A1_READ_REG_RESP	= 0x1a,
 };
 
+/********** config paramters */
+struct A1_config_options {
+	int ref_clk_khz;
+	int sys_clk_khz;
+	int spi_clk_khz;
+	/* limit chip chain to this number of chips (testing only) */
+	int override_chip_num;
+};
+
+/*
+ * for now, we have one global config, defaulting values:
+ * - ref_clk 16MHz / sys_clk 250MHz
+ * - 800 kHz SPI clock
+ */
+static struct A1_config_options config_options = {
+	.ref_clk_khz = 16000, .sys_clk_khz = 250000, .spi_clk_khz = 800,
+};
+
+/* override values with --bitmine-a1-options ref:sys:spi: - use 0 for default */
+static struct A1_config_options *parsed_config_options;
+
 /********** temporary helper for hexdumping SPI traffic */
 #define DEBUG_HEXDUMP 1
 static void hexdump(char *prefix, uint8_t *buff, int len)
@@ -542,13 +563,35 @@ void A1_detect(bool hotplug)
 	/* no hotplug support for now */
 	if (hotplug)
 		return;
+
+	if (opt_bitmine_a1_options != NULL && parsed_config_options == NULL) {
+		int ref_clk;
+		int sys_clk;
+		int spi_clk;
+		int override_chip_num;
+
+		sscanf(opt_bitmine_a1_options, "%d:%d:%d:%d",
+		       &ref_clk, &sys_clk, &spi_clk,  &override_chip_num);
+		if (ref_clk != 0)
+			config_options.ref_clk_khz = ref_clk;
+		if (sys_clk != 0)
+			config_options.sys_clk_khz = sys_clk;
+		if (spi_clk != 0)
+			config_options.spi_clk_khz = spi_clk;
+		if (override_chip_num != 0)
+			config_options.override_chip_num = override_chip_num;
+
+		/* config options are global, scan them once */
+		parsed_config_options = &config_options;
+	}
+
 	applog(LOG_DEBUG, "A1 detect");
 	A1_hw_reset();
 	for (bus = 0; bus < MAX_SPI_BUS; bus++) {
 		for (cs_line = 0; cs_line < MAX_SPI_CS; cs_line++) {
 			struct spi_config cfg = default_spi_config;
 			cfg.mode = SPI_MODE_1;
-			cfg.speed = 1500000;
+			cfg.speed = config_options.spi_clk_khz * 1000;
 			cfg.bus = bus;
 			cfg.cs_line = cs_line;
 			A1_detect_one_chain(&cfg);
