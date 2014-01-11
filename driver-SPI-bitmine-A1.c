@@ -508,6 +508,30 @@ static int64_t A1_scanwork(struct thr_info *thr)
 
 	/* check for completed works */
 	for (i = 0; i < a1->num_chips; i++) {
+		if (is_chip_disabled(a1, i + 1))
+			continue;
+		if (!cmd_READ_REG(a1, i + 1)) {
+			applog(LOG_ERR, "Failed to read reg from chip %d", i);
+			// TODO: what to do now?
+			continue;
+		}
+		hexdump("A1 RX", a1->spi_rx, 8);
+		if ((a1->spi_rx[5] & 0x02) != 0x02) {
+			work_updated = true;
+			struct work *work = wq_dequeue(&a1->active_wq);
+			assert(work != NULL);
+			if (!set_work(a1, i + 1, work))
+				continue;
+
+			nonce_ranges_processed++;
+			struct A1_chip *chip = &a1->chips[i];
+			chip->nonce_ranges_done++;
+			applog(LOG_DEBUG, "chip %d: job done => %d/%d/%d/%d",
+			       i + 1,
+			       chip->nonce_ranges_done, chip->nonces_found,
+			       chip->hw_errors, chip->stales);
+		}
+		// repeat twice in case both jobs were done
 		if (!cmd_READ_REG(a1, i + 1)) {
 			applog(LOG_ERR, "Failed to read reg from chip %d", i);
 			// TODO: what to do now?
@@ -548,7 +572,7 @@ static int64_t A1_scanwork(struct thr_info *thr)
 	return (int64_t)nonce_ranges_processed << 32;
 }
 
-/* queue one work per chip in chain */
+/* queue two work items per chip in chain */
 static bool A1_queue_full(struct cgpu_info *cgpu)
 {
 	struct A1_chain *a1 = cgpu->device_data;
@@ -559,7 +583,7 @@ static bool A1_queue_full(struct cgpu_info *cgpu)
 	applog(LOG_DEBUG, "A1 running queue_full: %d/%d",
 	       a1->active_wq.num_elems, a1->num_chips);
 
-	if (a1->active_wq.num_elems >= a1->num_chips) {
+	if (a1->active_wq.num_elems >= a1->num_chips * 2) {
 		applog(LOG_DEBUG, "active_wq full");
 		queue_full = true;
 	} else {
