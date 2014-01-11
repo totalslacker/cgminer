@@ -71,6 +71,17 @@ static struct work *wq_dequeue(struct work_queue *wq)
  */
 #define COOLDOWN_MS (10 * 1000)
 
+/* the WRITE_JOB command is the largest (2 bytes command, 56 bytes payload) */
+#define WRITE_JOB_LENGTH	58
+#define MAX_CHAIN_LENGTH	255
+/*
+ * For commands to traverse the chain, we need to issue dummy writes to
+ * keep SPI clock running. To reach the last chip in the chain, we need to
+ * write the command, followed by chain-length words to pass it through the
+ * chain and another chain-length words to get the ACK back to host
+ */
+#define MAX_CMD_LENGTH		(WRITE_JOB_LENGTH + MAX_CHAIN_LENGTH * 2 * 2)
+
 struct A1_chip {
 	int num_cores;
 	int last_queued_id;
@@ -89,8 +100,8 @@ struct A1_chain {
 	struct cgpu_info *cgpu;
 	int num_chips;
 	int num_cores;
-	uint8_t spi_tx[128];
-	uint8_t spi_rx[128];
+	uint8_t spi_tx[MAX_CMD_LENGTH];
+	uint8_t spi_rx[MAX_CMD_LENGTH];
 	struct spi_ctx *spi_ctx;
 	struct A1_chip *chips;
 	pthread_mutex_t lock;
@@ -131,7 +142,6 @@ static void hexdump(char *prefix, uint8_t *buff, int len)
 }
 
 /********** upper layer SPI functions */
-#define MAX_POLL_NUM	20
 static bool spi_send_command(struct A1_chain *a1, uint8_t cmd, uint8_t addr,
 			     uint8_t *buff, int len)
 {
@@ -152,9 +162,12 @@ static bool spi_poll_result(struct A1_chain *a1, uint8_t cmd,
 			    uint8_t chip_id, int len)
 {
 	int i;
-	for(i = 0; i < MAX_POLL_NUM; i++) {
+	int max_poll_words = a1->num_chips * 2 + 1;
+	/* at startup, we don't know the chain-length */
+	if (a1->num_chips == 0)
+		max_poll_words += MAX_CHAIN_LENGTH * 2;
+	for(i = 0; i < max_poll_words; i++) {
 		bool s = spi_transfer(a1->spi_ctx, NULL, a1->spi_rx, 2);
-		hexdump("TX", a1->spi_tx, 2);
 		hexdump("RX", a1->spi_rx, 2);
 		if (!s)
 			return false;
@@ -194,15 +207,36 @@ static bool cmd_RESET_BCAST(struct A1_chain *a1)
 		spi_poll_result(a1, A1_RESET, 0x00, 0);
 }
 
+static bool cmd_WRITE_REG_BCAST(struct A1_chain *a1, uint8_t *reg)
+{
+	return	spi_send_command(a1, A1_WRITE_REG, 0, reg, 6) &&
+		spi_poll_result(a1, A1_WRITE_REG, 0, 6);
+}
+
 static bool cmd_WRITE_REG(struct A1_chain *a1, uint8_t chip, uint8_t *reg)
 {
-	return	spi_send_command(a1, A1_WRITE_REG, chip, reg, 6);
+	/* ensure we push the SPI command to the last chip in chain */
+	int tx_length = 8 + a1->num_chips * 4;
+	memcpy(a1->spi_tx, reg, 8);
+	memset(a1->spi_tx + 8, 0, tx_length - 8);
+
+	return spi_transfer(a1->spi_ctx, a1->spi_tx, a1->spi_rx, tx_length);
 }
 
 static bool cmd_READ_REG(struct A1_chain *a1, uint8_t chip)
 {
 	return	spi_send_command(a1, A1_READ_REG, chip, NULL, 0) &&
 		spi_poll_result(a1, A1_READ_REG_RESP, chip, 6);
+}
+
+static bool cmd_WRITE_JOB(struct A1_chain *a1, uint8_t chip_id, uint8_t *job)
+{
+	/* ensure we push the SPI command to the last chip in chain */
+	int tx_length = WRITE_JOB_LENGTH + a1->num_chips * 4;
+	memcpy(a1->spi_tx, job, WRITE_JOB_LENGTH);
+	memset(a1->spi_tx + WRITE_JOB_LENGTH, 0, tx_length - WRITE_JOB_LENGTH);
+
+	return spi_transfer(a1->spi_ctx, a1->spi_tx, a1->spi_rx, tx_length);
 }
 
 /********** A1 low level functions */
@@ -290,7 +324,7 @@ void check_disabled_chips(struct A1_chain *a1)
 static uint8_t *create_job(uint8_t chip_id, uint8_t job_id,
 			   const char *midstate, const char *wdata)
 {
-	static uint8_t job[58] = {
+	static uint8_t job[WRITE_JOB_LENGTH] = {
 		/* command */
 		0x00, 0x00,
 		/* midstate */
@@ -343,9 +377,7 @@ static bool set_work(struct A1_chain *a1, uint8_t chip_id, struct work *work)
 	}
 	uint8_t *jobdata = create_job(chip_id, chip->last_queued_id + 1,
 				      midstate, wdata);
-	hexdump("JOB", jobdata, 58);
-	memcpy(a1->spi_tx, jobdata, 58);
-	if (!spi_transfer(a1->spi_ctx, jobdata, a1->spi_rx, 58)) {
+	if (!cmd_WRITE_JOB(a1, chip_id, jobdata)) {
 		/* give back work */
 		work_completed(a1->cgpu, work);
 
@@ -366,9 +398,9 @@ static bool get_nonce(struct A1_chain *a1, uint8_t *nonce,
 	if (!spi_send_command(a1, A1_READ_RESULT, 0x00, NULL, 0))
 		return false;
 
-	for(i = 0; i < MAX_POLL_NUM; i++) {
-		memset(a1->spi_tx, 0, 2);
-		if (!spi_transfer(a1->spi_ctx, a1->spi_tx, a1->spi_rx, 2))
+	int max_poll_words = a1->num_chips * 2 + 1;
+	for(i = 0; i < max_poll_words; i++) {
+		if (!spi_transfer(a1->spi_ctx, NULL, a1->spi_rx, 2))
 			return false;
 		hexdump("RX", a1->spi_rx, 2);
 		if (a1->spi_rx[0] == A1_READ_RESULT && a1->spi_rx[1] == 0x00) {
