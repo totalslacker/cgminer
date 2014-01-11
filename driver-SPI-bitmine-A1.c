@@ -287,6 +287,76 @@ static bool is_busy(struct A1_chain *a1, uint8_t chip)
 	return (a1->spi_rx[5] & 0x01) == 0x01;
 }
 
+#define MAX_PLL_WAIT_CYCLES 25
+#define PLL_CYCLE_WAIT_TIME 40
+static bool check_chip_pll_lock(struct A1_chain *a1, int chip_id, uint8_t *wr)
+{
+	int n;
+	for (n = 0; n < MAX_PLL_WAIT_CYCLES; n++) {
+		/* check for PLL lock status */
+		if (cmd_READ_REG(a1, chip_id) && (a1->spi_rx[4] & 1) == 1)
+			/* double check that we read back what we set before */
+			return wr[0] == a1->spi_rx[2] && wr[1] == a1->spi_rx[3];
+
+		cgsleep_ms(40);
+	}
+	applog(LOG_ERR, "Chip %d failed PLL lock", chip_id);
+	return false;
+}
+
+static bool set_pll_config(struct A1_chain *a1,
+			   int ref_clock_khz, int sys_clock_khz)
+{
+	/*
+	 * TODO: this is only an initial approach with binary adjusted
+	 * dividers and thus not exploiting the whole divider range.
+	 *
+	 * If required, the algorithm can be adapted to find the PLL
+	 * parameters after:
+	 *
+	 * sys_clk = (ref_clk * pll_fbdiv) / (pll_prediv * pll_postdiv)
+	 *
+	 * with a higher pll_postdiv being desired over a higher pll_prediv
+	 */
+
+	int i, n;
+	static uint8_t writereg[128] = { 0x00, 0x00, 0x21, 0x84 /*0x80*/, };
+	uint8_t pre_div = 2;
+	uint8_t post_div = 4;
+	uint32_t fb_div = (sys_clock_khz * pre_div * post_div) / ref_clock_khz;
+
+	applog(LOG_WARNING, "Setting PLL: CLK_REF=%dMHz, SYS_CLK=%dMHz",
+	       ref_clock_khz / 1000, sys_clock_khz / 1000);
+
+	while (fb_div > 511) {
+		post_div <<= 1;
+		fb_div >>= 1;
+	}
+	if (post_div > 16) {
+		applog(LOG_WARNING, "Can't set PLL parameters");
+		return false;
+	}
+	writereg[0] = (pre_div << 6) | (post_div << 1) | (fb_div >> 8);
+	writereg[1] = fb_div & 0xff;
+	applog(LOG_WARNING, "Setting PLL to pre_div=%d, post_div=%d, fb_div=%d"
+	       ": 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x",
+	       pre_div, post_div, fb_div,
+	       writereg[0], writereg[1], writereg[2],
+	       writereg[3], writereg[4], writereg[5]);
+
+	if (!cmd_WRITE_REG_BCAST(a1, writereg))
+		return false;
+
+	for (i = 0; i < a1->num_chips; i++) {
+		int chip_id = i + 1;
+		if (!check_chip_pll_lock(a1, chip_id, writereg)) {
+			applog(LOG_ERR, "Chip %d failed PLL lock", chip_id);
+			return false;
+		}
+	}
+	return true;
+}
+
 
 /********** disable / re-enable related section (temporary for testing) */
 static int get_current_ms(void)
@@ -483,11 +553,19 @@ struct A1_chain *init_A1_chain(struct spi_ctx *ctx)
 		goto failure;
 
 	a1->num_chips = a1->spi_rx[3];
+	if (config_options.override_chip_num > 0 &&
+	    a1->num_chips > config_options.override_chip_num)
+		a1->num_chips = config_options.override_chip_num;
+
 	applog(LOG_WARNING, "spidev%d.%d: Found %d A1 chips",
 	       a1->spi_ctx->config.bus, a1->spi_ctx->config.cs_line,
 	       a1->num_chips);
 
 	if (a1->num_chips == 0)
+		goto failure;
+
+	if (!set_pll_config(a1, config_options.ref_clk_khz,
+			    config_options.sys_clk_khz))
 		goto failure;
 
 	a1->chips = calloc(a1->num_chips, sizeof(struct A1_chip));
