@@ -1,7 +1,7 @@
 /*
  * generic SPI functions
  *
- * Copyright 2013 Zefir Kurtisi <zefir.kurtisi@gmail.com>
+ * Copyright 2013, 2014 Zefir Kurtisi <zefir.kurtisi@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
