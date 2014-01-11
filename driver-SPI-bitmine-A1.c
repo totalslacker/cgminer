@@ -357,6 +357,27 @@ static bool set_pll_config(struct A1_chain *a1,
 	return true;
 }
 
+/*
+ * BIST_START works only once after HW reset, on subsequent calls it
+ * returns 0 as number of chips.
+ *
+ * During testing / chip-bring up one might not be able or not want to reset
+ * chips on each cgminer restart, therefore this is an indirect alternative
+ * to enumerate chips in a chain by reading the chips' registers.
+ *
+ * TODO: to be removed after chip bring-up / testing
+ */
+static int manual_chain_detect(struct A1_chain *a1)
+{
+	int i;
+	for (i = 0; ; i++) {
+		if (!cmd_READ_REG(a1, i+1)) {
+			applog(LOG_WARNING, "manually detected %d chips", i);
+			return i;
+		}
+	}
+	return 0;
+}
 
 /********** disable / re-enable related section (temporary for testing) */
 static int get_current_ms(void)
@@ -561,8 +582,11 @@ struct A1_chain *init_A1_chain(struct spi_ctx *ctx)
 	       a1->spi_ctx->config.bus, a1->spi_ctx->config.cs_line,
 	       a1->num_chips);
 
-	if (a1->num_chips == 0)
-		goto failure;
+	if (a1->num_chips == 0) {
+		a1->num_chips = manual_chain_detect(a1);
+		if (a1->num_chips == 0)
+			goto failure;
+	}
 
 	if (!set_pll_config(a1, config_options.ref_clk_khz,
 			    config_options.sys_clk_khz))
