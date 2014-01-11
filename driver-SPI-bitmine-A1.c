@@ -197,8 +197,21 @@ static bool cmd_READ_REG(struct A1_chain *a1, uint8_t chip)
 /********** A1 low level functions */
 static void A1_hw_reset(void)
 {
-	/* TODO: issue cold reset */
-	usleep(100000);
+	/*
+	 * TODO: issue cold reset
+	 *
+	 * NOTE: suggested sequence
+	 * a) reset the RSTN pin for at least 1s
+	 * b) release the RSTN pin
+	 * c) wait at least 1s before sending the first CMD
+	 */
+
+#ifdef NOTYET
+	a1_nreset_low();
+	cgsleep_ms(1000);
+	a1_nreset_hi();
+	cgsleep_ms(1000);
+#endif
 }
 
 static bool is_busy(struct A1_chain *a1, uint8_t chip)
@@ -320,37 +333,10 @@ static bool get_nonce(struct A1_chain *a1, uint8_t *nonce,
 static bool abort_work(struct A1_chain *a1)
 {
 	/*
-	 * for now, the proposed input queue reset does not seem to work
 	 * TODO: implement reliable abort method
 	 * NOTE: until then, we are completing queued work => stales
 	 */
-
 	return true;
-
-	int i;
-	applog(LOG_WARNING, "abort_work...");
-	for (i = 0; i < a1->num_chips; i++) {
-		int chip_id = i + 1;
-		if (!cmd_READ_REG(a1, i + 1)) {
-			applog(LOG_ERR, "Failed to read reg from chip %d",
-			       chip_id);
-			// TODO: what to do now?
-			continue;
-		}
-		hexdump("A1 RX", a1->spi_rx, 8);
-		uint8_t reg[160];
-		memset(reg, 0, 160);
-		memcpy(reg, a1->spi_rx + 2, 6);
-		reg[3] &= 0xfc;
-		reg[4] = 0;
-		if (!cmd_WRITE_REG(a1, i + 1, reg)) {
-			applog(LOG_ERR, "Failed to write reg of chip %d",
-			       chip_id);
-			// TODO: what to do now?
-			continue;
-		}
-	}
-	return cmd_RESET_BCAST(a1);
 }
 
 /********** driver interface */
