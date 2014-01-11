@@ -159,7 +159,6 @@ static bool spi_poll_result(struct A1_chain *a1, uint8_t cmd,
 			hexdump("poll_result", a1->spi_rx, len + 2);
 			return true;
 		}
-		cgsleep_ms(10);
 	}
 	applog(LOG_WARNING, "Failure: missing ACK for cmd 0x%02x", cmd);
 	return false;
@@ -312,7 +311,6 @@ static bool get_nonce(struct A1_chain *a1, uint8_t *nonce,
 
 			return true;
 		}
-		cgsleep_ms(1);
 	}
 	applog(LOG_ERR, "Failed to poll for results");
 	return false;
