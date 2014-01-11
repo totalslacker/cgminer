@@ -314,6 +314,7 @@ static bool get_nonce(struct A1_chain *a1, uint8_t *nonce,
 		}
 		cgsleep_ms(1);
 	}
+	applog(LOG_ERR, "Failed to poll for results");
 	return false;
 }
 
@@ -516,7 +517,7 @@ static int64_t A1_scanwork(struct thr_info *thr)
 			nonce_ranges_processed--;
 			continue;
 		}
-		applog(LOG_WARNING, "YEAH: chip %d: nonce 0x%08x",
+		applog(LOG_DEBUG, "YEAH: chip %d: nonce 0x%08x",
 		       chip_id, nonce);
 		chip->nonces_found++;
 	}
@@ -539,7 +540,7 @@ static int64_t A1_scanwork(struct thr_info *thr)
 			nonce_ranges_processed++;
 			struct A1_chip *chip = &a1->chips[i];
 			chip->nonce_ranges_done++;
-			applog(LOG_WARNING, "chip %d: job done => %d/%d/%d/%d",
+			applog(LOG_DEBUG, "chip %d: job done => %d/%d/%d/%d",
 			       i + 1,
 			       chip->nonce_ranges_done, chip->nonces_found,
 			       chip->hw_errors, chip->stales);
@@ -553,7 +554,7 @@ static int64_t A1_scanwork(struct thr_info *thr)
 	}
 
 	if (nonce_ranges_processed != 0) {
-		applog(LOG_WARNING, "nonces processed %d",
+		applog(LOG_DEBUG, "nonces processed %d",
 		       nonce_ranges_processed);
 	}
 	/* in case of no progress, prevent busy looping */
