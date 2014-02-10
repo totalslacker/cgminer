@@ -44,3 +44,8 @@ lib/warn-on-use.h
 mkinstalldirs
 
 *.swp
+compat
+m4
+ccan
+libtool
+ltmain.sh
