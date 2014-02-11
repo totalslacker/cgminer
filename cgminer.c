@@ -177,6 +177,9 @@ char *opt_drillbit_options = NULL;
 #ifdef USE_BITMINE_A1
 char *opt_bitmine_a1_options = NULL;
 #endif
+#ifdef USE_BMHASHER
+char *opt_bmhasher_options = NULL;
+#endif
 #ifdef USE_USBUTILS
 char *opt_usb_select = NULL;
 int opt_usbdump = -1;
@@ -1074,6 +1077,16 @@ static char *set_bitmine_a1_options(const char *arg)
 	return NULL;
 }
 #endif
+
+#ifdef USE_BMHASHER
+static char *set_bmhasher_options(const char *arg)
+{
+	opt_set_charp(arg, &opt_bmhasher_options);
+
+	return NULL;
+}
+#endif
+
 #ifdef USE_USBUTILS
 static char *set_usb_select(const char *arg)
 {
@@ -1245,6 +1258,11 @@ static struct opt_table opt_config_table[] = {
 	OPT_WITH_ARG("--bitmine-a1-options",
 		     set_bitmine_a1_options, NULL, NULL,
 		     "Bitmine A1 options ref_clk_khz:sys_clk_khz:spi_clk_khz:override_chip_num"),
+#endif
+#ifdef USE_BMHASHER
+	OPT_WITH_ARG("--bmhasher-options",
+		     set_bmhasher_options, NULL, NULL,
+		     "BM Hasher options ref_clk_khz:sys_clk_khz:spi_clk_khz:override_chip_num"),
 #endif
 	OPT_WITHOUT_ARG("--load-balance",
 		     set_loadbalance, &pool_strategy,
@@ -1553,6 +1571,9 @@ static char *opt_verusage_and_exit(const char *extra)
 #endif
 #ifdef USE_BITMINE_A1
 		"Bitmine.A1 "
+#endif
+#ifdef USE_BMHASHER
+		"BMHasher "
 #endif
 		"mining support.\n"
 		, packagename);
@@ -4418,6 +4439,10 @@ void write_config(FILE *fcfg)
 #ifdef USE_BITMINE_A1
 	if (opt_bitmine_a1_options)
 		fprintf(fcfg, ",\n\"bitmine-a1-options\" : \"%s\"", json_escape(opt_bitmine_a1_options));
+#endif
+#ifdef USE_BMHASHER
+	if (opt_bmhasher_options)
+		fprintf(fcfg, ",\n\"bmhasher-options\" : \"%s\"", json_escape(opt_bmhasher_options));
 #endif
 #ifdef USE_USBUTILS
 	if (opt_usb_select)

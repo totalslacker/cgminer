@@ -238,6 +238,7 @@ static inline int fsync (int fd)
 	DRIVER_ADD_COMMAND(klondike) \
 	DRIVER_ADD_COMMAND(knc) \
 	DRIVER_ADD_COMMAND(bitmineA1) \
+	DRIVER_ADD_COMMAND(bmhasher) \
 	DRIVER_ADD_COMMAND(drillbit) \
 	DRIVER_ADD_COMMAND(bab) \
 	DRIVER_ADD_COMMAND(avalon)
@@ -961,6 +962,9 @@ extern char *opt_drillbit_options;
 #endif
 #ifdef USE_BITMINE_A1
 extern char *opt_bitmine_a1_options;
+#endif
+#ifdef USE_BMHASHER
+extern char *opt_bmhasher_options;
 #endif
 #ifdef USE_USBUTILS
 extern char *opt_usb_select;

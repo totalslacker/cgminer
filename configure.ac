@@ -192,6 +192,17 @@ if test "x$bitmine_A1" = xyes; then
 fi
 AM_CONDITIONAL([HAS_BITMINE_A1], [test x$bitmine_A1 = xyes])
 
+bmhasher="no"
+
+AC_ARG_ENABLE([bmhasher],
+	[AC_HELP_STRING([--enable-bmhasher],[Compile support for BM Hasher (default disabled)])],
+	[bmhasher=$enableval]
+	)
+if test "x$bmhasher" = xyes; then
+	AC_DEFINE([USE_BMHASHER], [1], [Defined to 1 if BM Hasher support is wanted])
+fi
+AM_CONDITIONAL([HAS_BMHASHER], [test x$bmhasher = xyes])
+
 drillbit="no"
 
 AC_ARG_ENABLE([drillbit],
@@ -283,7 +294,7 @@ else
 	])
 fi
 
-if test x$avalon$bitforce$bitfury$bitmine_A1$modminer$bflsc$icarus$hashfast$klondike$drillbit != xnononononononononono; then
+if test x$avalon$bitforce$bitfury$bitmine_A1$bmhasher$modminer$bflsc$icarus$hashfast$klondike$drillbit != xnonononononononononono; then
 	want_usbutils=true
 else
 	want_usbutils=false
@@ -492,6 +503,12 @@ else
 	echo "  Bitmine.ASICs........: Disabled"
 fi
 
+if test "x$bmhasher" = xyes; then
+	echo "  BMHasher.............: Enabled"
+else
+	echo "  BMHasher.............: Disabled"
+fi
+
 if test "x$drillbit" = xyes; then
 	echo "  Drillbit.BitFury.....: Enabled"
 else
@@ -528,7 +545,7 @@ else
 	echo "  ModMiner.FPGAs.......: Disabled"
 fi
 
-if test "x$avalon$bab$bflsc$bitforce$bitfury$bitmine_A1$hashfast$icarus$klondike$knc$modminer$drillbit" = xnononononononononononono; then
+if test "x$avalon$bab$bflsc$bitforce$bitfury$bitmine_A1$bmhasher$hashfast$icarus$klondike$knc$modminer$drillbit" = xnonononononononononononono; then
 	AC_MSG_ERROR([No mining configured in])
 fi
 

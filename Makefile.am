@@ -81,6 +81,10 @@ cgminer_SOURCES += driver-SPI-bitmine-A1.c
 cgminer_SOURCES += spi-context.c spi-context.h
 endif
 
+if HAS_BMHASHER
+cgminer_SOURCES += driver-bmhasher.c
+endif
+
 if HAS_DRILLBIT
 cgminer_SOURCES += driver-drillbit.c driver-drillbit.h
 endif
