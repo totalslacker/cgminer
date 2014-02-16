@@ -281,7 +281,7 @@ static void testwork(struct work * work)
 	bool nonceOK;
 	unsigned char *midstate = work->midstate;
 	unsigned char *wdata = work->data + 64;
-	uint8_t *hash_8 = (uint8_t *)(work->hash + 28);
+	uint8_t *hash_8 = (uint8_t *)(work->hash + 0);
 
 	applog(LOG_DEBUG, "******************** testwork\n");
 
@@ -309,6 +309,17 @@ static void testwork(struct work * work)
 	hexdump("HASH: ", hash_8, 32);
 
 	nonce = 0xb3587bbe;
+	nonceOK = test_nonce(work, nonce);
+	applog(LOG_DEBUG, "nonce=0x%x nonceOK=%d\n", nonce, nonceOK);
+	hexdump("HASH: ", hash_8, 32);
+
+	applog(LOG_DEBUG, "******************** loser nonces\n");
+	nonce = 0x47b8a662;
+	nonceOK = test_nonce(work, nonce);
+	applog(LOG_DEBUG, "nonce=0x%x nonceOK=%d\n", nonce, nonceOK);
+	hexdump("HASH: ", hash_8, 32);
+
+	nonce = 0x62a6b847;
 	nonceOK = test_nonce(work, nonce);
 	applog(LOG_DEBUG, "nonce=0x%x nonceOK=%d\n", nonce, nonceOK);
 	hexdump("HASH: ", hash_8, 32);
