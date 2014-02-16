@@ -87,6 +87,27 @@ struct BMH_chain {
 	struct work_queue active_wq;
 };
 
+/********** temporary helper for hexdumping SPI traffic */
+#define DEBUG_HEXDUMP 1
+static void hexdump(char *prefix, uint8_t *buff, int len)
+{
+#if DEBUG_HEXDUMP
+	static char line[2048];
+	char *pos = line;
+	int i;
+	if (len < 1)
+		return;
+
+	pos += sprintf(pos, "%s: %d bytes:", prefix, len);
+	for (i = 0; i < len; i++) {
+		if (i > 0 && (i % 32) == 0)
+			pos += sprintf(pos, "\n\t");
+		pos += sprintf(pos, "%.2X ", buff[i]);
+	}
+	applog(LOG_DEBUG, "%s", line);
+#endif
+}
+
 /********** driver interface */
 void exit_BMH_chain(struct BMH_chain *bmh)
 {
@@ -245,12 +266,76 @@ static int64_t BMH_scanwork(struct thr_info *thr)
 	return 0;
 }
 
+static void testwork(struct work * work)
+{
+	static uint8_t jobData[] = {
+		/* midstate */
+		0x8C, 0x1F, 0xA3, 0x18, 0xD8, 0x0A, 0x25, 0x2C, 0xE4, 0xB7, 0xCD, 0x6D, 0x12, 0x2F, 0x80, 0x8F,
+		0x17, 0xDC, 0xD8, 0x10, 0x04, 0x17, 0xEA, 0x3F, 0xE8, 0xF3, 0x71, 0x41, 0x70, 0xF3, 0x4B, 0x49,
+		/* wdata */
+		0xD6, 0x98, 0x8E, 0x01, 0x27, 0x1F, 0x66, 0x52, 0xB6, 0x0A, 0x10, 0x19,
+		/* start-nonce, difficulty 1, end-nonce */
+		0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x1D, 0xFF, 0xFF, 0xFF, 0xFF
+	};
+	uint32_t nonce;
+	bool nonceOK;
+	unsigned char *midstate = work->midstate;
+	unsigned char *wdata = work->data + 64;
+	uint8_t *hash_8 = (uint8_t *)(work->hash + 28);
+
+	applog(LOG_DEBUG, "******************** testwork\n");
+
+	memcpy(midstate, jobData, 32);
+	memcpy(wdata, &jobData[32], 12);
+
+	nonce = 0x99b18d18;
+	nonceOK = test_nonce(work, nonce);
+	applog(LOG_DEBUG, "nonce=0x%x nonceOK=%d\n", nonce, nonceOK);
+	hexdump("HASH: ", hash_8, 32);
+
+	nonce = 0x0cb2a63a;
+	nonceOK = test_nonce(work, nonce);
+	applog(LOG_DEBUG, "nonce=0x%x nonceOK=%d\n", nonce, nonceOK);
+	hexdump("HASH: ", hash_8, 32);
+
+	nonce = 0xde648f3f;
+	nonceOK = test_nonce(work, nonce);
+	applog(LOG_DEBUG, "nonce=0x%x nonceOK=%d\n", nonce, nonceOK);
+	hexdump("HASH: ", hash_8, 32);
+
+	nonce = 0x09c79cb9;
+	nonceOK = test_nonce(work, nonce);
+	applog(LOG_DEBUG, "nonce=0x%x nonceOK=%d\n", nonce, nonceOK);
+	hexdump("HASH: ", hash_8, 32);
+
+	nonce = 0xb3587bbe;
+	nonceOK = test_nonce(work, nonce);
+	applog(LOG_DEBUG, "nonce=0x%x nonceOK=%d\n", nonce, nonceOK);
+	hexdump("HASH: ", hash_8, 32);
+}
+
 /* queue two work items per chip in chain */
 static bool BMH_queue_full(struct cgpu_info *cgpu)
 {
+	struct BMH_chain *bmh = cgpu->device_data;
 	int queue_full = false;
+	struct work *work;
 
-	applog(LOG_DEBUG, "BMH_queue_full");
+	// applog(LOG_DEBUG, "BMH_queue_full");
+	mutex_lock(&bmh->lock);
+	applog(LOG_DEBUG, "BMH running queue_full: %d/%d",
+	       bmh->active_wq.num_elems, bmh->num_modules);
+
+	if (bmh->active_wq.num_elems >= bmh->num_modules * 2) {
+		// applog(LOG_DEBUG, "active_wq full");
+		queue_full = true;
+	} else {
+		applog(LOG_DEBUG, "active_wq enquing");
+		work = get_queued(cgpu);
+		testwork(work);
+		wq_enqueue(&bmh->active_wq, work);
+	}
+	mutex_unlock(&bmh->lock);
 
 	return queue_full;
 }
