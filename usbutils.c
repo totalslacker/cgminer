@@ -301,6 +301,18 @@ static struct usb_intinfo cmr2_ints[] = {
 };
 #endif
 
+#ifdef USE_BMHASHER
+// N.B. transfer size is 512 with USB2.0, but only 64 with USB1.1
+static struct usb_epinfo bmh_epinfos[] = {
+	{ LIBUSB_TRANSFER_TYPE_BULK,	64,	EPI(1), 0, 0 },
+	{ LIBUSB_TRANSFER_TYPE_BULK,	64,	EPO(2), 0, 0 }
+};
+
+static struct usb_intinfo bmh_ints[] = {
+	USB_EPS(0, bmh_epinfos)
+};
+#endif
+
 #define IDVENDOR_FTDI 0x0403
 
 #define INTINFO(_ints) \
@@ -533,6 +545,20 @@ static struct usb_find_devices find_dev[] = {
 		.timeout = ICARUS_TIMEOUT_MS,
 		.latency = LATENCY_STD,
 		INTINFO(cmr2_ints) },
+#endif
+#ifdef USE_BMHASHER
+	{
+		.drv = DRIVER_bmhasher,
+		.name = "BMH",
+		.ident = IDENT_BAS,
+		.idVendor = 0x10c4,
+		.idProduct = 0xea60,
+		//.iManufacturer = "Butterfly Labs",
+		.iProduct = "BitFORCE SHA256 SC",
+		.config = 1,
+		.timeout = BFLSC_TIMEOUT_MS,
+		.latency = LATENCY_STD,
+		INTINFO(bmh_ints) },
 #endif
 	{ DRIVER_MAX, NULL, 0, 0, 0, NULL, NULL, 0, 0, 0, 0, NULL }
 };

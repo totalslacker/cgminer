@@ -19,6 +19,7 @@
 #include "logging.h"
 #include "miner.h"
 #include "util.h"
+#include "usbutils.h"
 
 
 /********** work queue */
@@ -119,7 +120,7 @@ void exit_BMH_chain(struct BMH_chain *bmh)
 }
 
 
-struct BMH_chain *init_BMH_chain(void *ctx)
+struct BMH_chain *init_BMH_chain(struct cgpu_info *cgpu)
 {
 	int i;
 	struct BMH_chain *bmh = malloc(sizeof(*bmh));
@@ -182,7 +183,7 @@ failure:
 	return NULL;
 }
 
-static bool BMH_detect_one_chain(void *cfg)
+static struct cgpu_info *BMH_detect_one_chain(struct libusb_device *dev, struct usb_find_devices *found)
 {
 	struct cgpu_info *cgpu;
 	// struct spi_ctx *ctx = spi_init(cfg);
@@ -190,25 +191,24 @@ static bool BMH_detect_one_chain(void *cfg)
 	// if (ctx == NULL)
 	// 	return false;
 
+	applog(LOG_DEBUG, "BMH_detect_one_chain: dev=%p", dev);
+
+	cgpu = usb_alloc_cgpu(&bmhasher_drv, 1);
+	assert(cgpu != NULL);
+
 	// struct BMH_chain *bmh = init_BMH_chain(ctx);
-	struct BMH_chain *bmh = init_BMH_chain(NULL);
+	struct BMH_chain *bmh = init_BMH_chain(cgpu);
 	if (bmh == NULL)
 		return false;
 
-	cgpu = malloc(sizeof(*cgpu));
-	assert(cgpu != NULL);
-
-	memset(cgpu, 0, sizeof(*cgpu));
-	cgpu->drv = &bmhasher_drv;
 	cgpu->name = "BMH";
 	cgpu->threads = 1;
-
 	cgpu->device_data = bmh;
 
 	bmh->cgpu = cgpu;
 	add_cgpu(cgpu);
 
-	return true;
+	return cgpu;
 }
 
 /* Probe SPI channel and register chip chain */
@@ -217,9 +217,13 @@ void BMH_detect(bool hotplug)
 	int bus;
 	int cs_line;
 
+	applog(LOG_DEBUG, "BMH_detect: hotplug=%d", hotplug);
+
 	/* no hotplug support for now */
 	if (hotplug)
 		return;
+
+	usb_detect(&bmhasher_drv, BMH_detect_one_chain);
 
 	// if (opt_bitmine_a1_options != NULL && parsed_config_options == NULL) {
 	// 	int ref_clk;
@@ -242,9 +246,7 @@ void BMH_detect(bool hotplug)
 	// 	parsed_config_options = &config_options;
 	// }
 
-	applog(LOG_DEBUG, "BMH_detect");
 	// BMH_detect_one_chain(&cfg);
-	BMH_detect_one_chain(NULL);
 	// A1_hw_reset();
 	// for (bus = 0; bus < MAX_SPI_BUS; bus++) {
 	// 	for (cs_line = 0; cs_line < MAX_SPI_CS; cs_line++) {
