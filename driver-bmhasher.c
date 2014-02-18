@@ -21,7 +21,6 @@
 #include "util.h"
 #include "usbutils.h"
 
-
 /********** work queue */
 struct work_ent {
 	struct work *work;
@@ -74,6 +73,8 @@ struct BMH_module {
 	int nonces_found;
 	int nonce_ranges_done;
 
+	struct BMH_chain * chain;
+
 	/* systime in ms when chip was disabled */
 	int cooldown_begin;
 };
@@ -107,6 +108,211 @@ static void hexdump(char *prefix, uint8_t *buff, int len)
 	}
 	applog(LOG_DEBUG, "%s", line);
 #endif
+}
+
+
+enum PacketTypes
+{
+	kHelloPacketType,
+	kWorkPacketType,
+	kRequestNoncesPacketType,
+	kStopPacketType,
+};
+
+typedef struct BMPacketHeader
+{
+	uint8_t		type;
+	uint8_t		address;
+	uint8_t		length;
+	uint8_t		flags;
+	uint16_t	crc16;
+} BMPacketHeader;
+
+typedef struct BMPacket
+{
+	BMPacketHeader	header;
+	uint8_t			payload[];
+} BMPacket;
+
+typedef struct HelloResponsePacket
+{
+	BMPacketHeader	header;
+	uint8_t			desiredQueueLength;
+} HelloResponsePacket;
+
+typedef struct WorkPacket
+{
+	BMPacketHeader	header;
+	uint8_t			midstate[32];
+	uint8_t			data[12];
+} WorkPacket;
+
+typedef struct StatusResponsePacket
+{
+	BMPacketHeader	header;
+	uint8_t			remainingWork;
+	uint8_t			desiredWork;
+	uint8_t			remainingNonces;
+	uint8_t			nonceCount;
+	uint32_t		nonces[16];
+} StatusResponsePacket;
+
+uint16_t crc16(uint16_t crcval, void *data_p, int count)
+{
+    /* CRC-16 Routine for processing multiple part data blocks.
+     * Pass 0 into 'crcval' for first call for any given block; for
+     * subsequent calls pass the CRC returned by the previous call. */
+    int 		xx;
+    uint8_t * 	ptr = data_p;
+
+    while (count-- > 0)
+    {
+        crcval = (uint16_t)( crcval ^ (uint16_t)(((uint16_t) *ptr++) << 8));
+        for (xx=0; xx < 8; xx++)
+        {
+            if (crcval & 0x8000)
+            {
+            	crcval=(uint16_t) ((uint16_t) (crcval << 1) ^ 0x1021);
+            }
+            else 
+            {
+            	crcval = (uint16_t) (crcval << 1);
+            }
+        }
+    }
+
+    return (crcval);
+}
+
+int CRCPacket(BMPacket * packet, uint16_t * crc)
+{
+	*crc = 0xFFFF;
+
+	// hash header except crc
+	*crc = crc16(*crc, packet, sizeof(BMPacketHeader) - 2);
+
+	// hash payload
+	if (packet->header.length > 0)
+	{
+		*crc = crc16(*crc, packet->payload, packet->header.length - 2);
+	}
+
+	return 0;
+}
+
+int BuildPacket(BMPacket * packet, int length)
+{
+	packet->header.length = length;
+	CRCPacket(packet, &packet->header.crc16);
+
+	return 0;
+}
+
+int CheckPacket(BMPacket * packet)
+{
+	uint16_t crc;
+
+	CRCPacket(packet, &crc);
+
+	return (crc == packet->header.crc16) ? 0 : -1;
+}
+
+int SendPacket(struct BMH_chain * bmh, int moduleIndex, BMPacket * packet)
+{
+	int len, err, tried;
+	int sendLength;
+	int amountSent;
+
+	// FIXME: Set this correctly...
+	packet->header.address = moduleIndex;
+	BuildPacket(packet, packet->header.length);
+	sendLength = packet->header.length + sizeof(BMPacketHeader);
+
+	hexdump("SendPacket", (uint8_t *) packet, sendLength);
+
+	err = usb_write(bmh->cgpu, (char *) packet, sendLength, &amountSent, C_BMHASHER);
+	if (err < 0 || amountSent < sendLength)
+	{
+		if (err > 0)
+		{
+			err = -1;
+		}
+		// N.B. thus !(*sent) directly implies err < 0 or *amount < send_len
+		return err;
+	}
+
+	applog(LOG_DEBUG, "SendPacket done");
+
+	return 0;
+}
+
+int ReceivePacket(struct BMH_chain * bmh, BMPacket * packet)
+{
+	int len, err, tried;
+	int rxLength;
+
+	applog(LOG_DEBUG, "ReceivePacket");
+
+	for (int i = 0; i < 60; i++)
+	{
+		err = usb_read_ok_timeout(bmh->cgpu, (char *) packet, sizeof(BMPacketHeader), &rxLength, 999, C_BMHASHER);
+
+		if (err >= 0 && rxLength == sizeof(BMPacketHeader))
+		{
+			break;
+		}
+		if ((err < 0 && err != LIBUSB_ERROR_TIMEOUT))
+		{
+			applog(LOG_DEBUG, "ReceivePacket: read error");
+			// N.B. thus !(*sent) directly implies err < 0 or *amount < send_len
+			return err;
+		}
+
+		cgsleep_ms(100);
+	}
+
+	// if still no header, then error
+	if (rxLength < sizeof(BMPacketHeader))
+	{
+		applog(LOG_DEBUG, "ReceivePacket: packet header timeout");
+		return LIBUSB_ERROR_TIMEOUT;
+	}
+
+	hexdump("ReceivePacket header", (uint8_t *) packet, sizeof(BMPacketHeader));
+	applog(LOG_DEBUG, "ReceivePacket: payload length=%d", packet->header.length);
+
+	if (packet->header.length > 0)
+	{
+		// this should come through pretty quickly...
+		for (int i = 0; i < 3; i++)
+		{
+			err = usb_read_ok_timeout(bmh->cgpu, (char *) packet, packet->header.length, &rxLength, 10, C_BMHASHER);
+
+			if (err >= 0 && rxLength == packet->header.length)
+			{
+				break;
+			}
+
+			if ((err < 0 && err != LIBUSB_ERROR_TIMEOUT))
+			{
+				// N.B. thus !(*sent) directly implies err < 0 or *amount < send_len
+				return err;
+			}
+
+			cgsleep_ms(100);
+		}
+
+		// if still no payload, then error
+		if (rxLength < packet->header.length)
+		{
+			applog(LOG_DEBUG, "ReceivePacket: packet payload timeout");
+			return LIBUSB_ERROR_TIMEOUT;
+		}
+
+		hexdump("ReceivePacket payload", packet->payload, packet->header.length);
+	}
+
+	return sizeof(BMPacketHeader) + packet->header.length;
 }
 
 /********** driver interface */
@@ -154,7 +360,13 @@ struct BMH_chain *init_BMH_chain(struct cgpu_info *cgpu)
 		applog(LOG_ERR, "BMH_chips allocation error");
 		goto failure;
 	}
-	// if (!cmd_BIST_FIX_BCAST(a1))
+
+	for (i = 0; i < bmh->num_modules; i++)
+	{
+		bmh->modules[i].chain = bmh;
+	}
+
+		// if (!cmd_BIST_FIX_BCAST(a1))
 	// 	goto failure;
 
 	// for (i = 0; i < a1->num_modules; i++) {
@@ -183,6 +395,93 @@ failure:
 	return NULL;
 }
 
+static void BMH_initialise(struct cgpu_info *cgpu)
+{
+	int err, interface;
+
+	applog(LOG_DEBUG, "BMH_initialise: usbinfo.nodev=%d", cgpu->usbinfo.nodev);
+
+// TODO: does x-link bypass the other device FTDI? (I think it does)
+//	So no initialisation required except for the master device?
+
+	if (cgpu->usbinfo.nodev)
+		return;
+
+	interface = usb_interface(cgpu);
+	// Reset
+	err = usb_transfer(cgpu, FTDI_TYPE_OUT, FTDI_REQUEST_RESET,
+				FTDI_VALUE_RESET, interface, C_RESET);
+
+	applog(LOG_DEBUG, "%s%i: reset got err %d",
+		cgpu->drv->name, cgpu->device_id, err);
+
+	if (cgpu->usbinfo.nodev)
+		return;
+
+	usb_ftdi_set_latency(cgpu);
+
+	if (cgpu->usbinfo.nodev)
+		return;
+
+	// Set data control
+	err = usb_transfer(cgpu, FTDI_TYPE_OUT, FTDI_REQUEST_DATA,
+				FTDI_VALUE_DATA_BAS, interface, C_SETDATA);
+
+	applog(LOG_DEBUG, "%s%i: setdata got err %d",
+		cgpu->drv->name, cgpu->device_id, err);
+
+	if (cgpu->usbinfo.nodev)
+		return;
+
+	// Set the baud
+	err = usb_transfer(cgpu, FTDI_TYPE_OUT, FTDI_REQUEST_BAUD, FTDI_VALUE_BAUD_BMH,
+				(FTDI_INDEX_BAUD_BMH & 0xff00) | interface,
+				C_SETBAUD);
+
+	applog(LOG_DEBUG, "%s%i: setbaud got err %d",
+		cgpu->drv->name, cgpu->device_id, err);
+
+	if (cgpu->usbinfo.nodev)
+		return;
+
+	// Set Flow Control
+	err = usb_transfer(cgpu, FTDI_TYPE_OUT, FTDI_REQUEST_FLOW,
+				FTDI_VALUE_FLOW, interface, C_SETFLOW);
+
+	applog(LOG_DEBUG, "%s%i: setflowctrl got err %d",
+		cgpu->drv->name, cgpu->device_id, err);
+
+	if (cgpu->usbinfo.nodev)
+		return;
+
+	// Set Modem Control
+	err = usb_transfer(cgpu, FTDI_TYPE_OUT, FTDI_REQUEST_MODEM,
+				FTDI_VALUE_MODEM, interface, C_SETMODEM);
+
+	applog(LOG_DEBUG, "%s%i: setmodemctrl got err %d",
+		cgpu->drv->name, cgpu->device_id, err);
+
+	if (cgpu->usbinfo.nodev)
+		return;
+
+	// Clear any sent data
+	err = usb_transfer(cgpu, FTDI_TYPE_OUT, FTDI_REQUEST_RESET,
+				FTDI_VALUE_PURGE_TX, interface, C_PURGETX);
+
+	applog(LOG_DEBUG, "%s%i: purgetx got err %d",
+		cgpu->drv->name, cgpu->device_id, err);
+
+	if (cgpu->usbinfo.nodev)
+		return;
+
+	// Clear any received data
+	err = usb_transfer(cgpu, FTDI_TYPE_OUT, FTDI_REQUEST_RESET,
+				FTDI_VALUE_PURGE_RX, interface, C_PURGERX);
+
+	applog(LOG_DEBUG, "%s%i: purgerx got err %d",
+		cgpu->drv->name, cgpu->device_id, err);
+}
+
 static struct cgpu_info *BMH_detect_one_chain(struct libusb_device *dev, struct usb_find_devices *found)
 {
 	struct cgpu_info *cgpu;
@@ -196,7 +495,6 @@ static struct cgpu_info *BMH_detect_one_chain(struct libusb_device *dev, struct 
 	cgpu = usb_alloc_cgpu(&bmhasher_drv, 1);
 	assert(cgpu != NULL);
 
-	// struct BMH_chain *bmh = init_BMH_chain(ctx);
 	struct BMH_chain *bmh = init_BMH_chain(cgpu);
 	if (bmh == NULL)
 		return false;
@@ -204,11 +502,34 @@ static struct cgpu_info *BMH_detect_one_chain(struct libusb_device *dev, struct 
 	cgpu->name = "BMH";
 	cgpu->threads = 1;
 	cgpu->device_data = bmh;
-
 	bmh->cgpu = cgpu;
-	add_cgpu(cgpu);
+
+	if (!usb_init(cgpu, dev, found))
+		goto shin;
+
+	BMH_initialise(cgpu);
+
+	if (!add_cgpu(cgpu))
+		goto unshin;
+
+	update_usb_stats(cgpu);
 
 	return cgpu;
+
+unshin:
+
+	applog(LOG_DEBUG, "BMH_detect_one_chain: unshin Error! Need to add cleanup...");
+	usb_uninit(cgpu);
+
+shin:
+	applog(LOG_DEBUG, "BMH_detect_one_chain: shin Error! Need to add cleanup...");
+
+	exit_BMH_chain(bmh);
+	cgpu->device_data = NULL;
+
+	cgpu = usb_free_cgpu(cgpu);
+
+	return NULL;
 }
 
 /* Probe SPI channel and register chip chain */
@@ -327,6 +648,10 @@ static void testwork(struct work * work)
 	hexdump("HASH: ", hash_8, 32);
 }
 
+static bool doneOnce = false;
+static uint8_t gPacketBuffer[512];
+static BMPacket * gPacket = (BMPacket *) gPacketBuffer;
+
 /* queue two work items per chip in chain */
 static bool BMH_queue_full(struct cgpu_info *cgpu)
 {
@@ -339,13 +664,33 @@ static bool BMH_queue_full(struct cgpu_info *cgpu)
 	applog(LOG_DEBUG, "BMH running queue_full: %d/%d",
 	       bmh->active_wq.num_elems, bmh->num_modules);
 
+	if (!doneOnce)
+	{
+		int length;
+
+		applog(LOG_DEBUG, "BMH_flush_work: sending hello packet");
+		gPacket->header.type = kHelloPacketType;
+		gPacket->header.length = 0;
+		SendPacket(bmh, 0, gPacket);
+
+		length = ReceivePacket(bmh, gPacket);
+		applog(LOG_DEBUG, "ReceivePacket: length=%d", length);
+		if (length >= 0)
+		{
+			applog(LOG_DEBUG, "ReceivePacket: type=%d length=%d", gPacket->header.type, gPacket->header.length);
+			hexdump("recevied packet", (uint8_t *) gPacket, length);
+		}
+
+		doneOnce = true;
+	}
+
 	if (bmh->active_wq.num_elems >= bmh->num_modules * 2) {
 		// applog(LOG_DEBUG, "active_wq full");
 		queue_full = true;
 	} else {
 		applog(LOG_DEBUG, "active_wq enquing");
 		work = get_queued(cgpu);
-		testwork(work);
+		// testwork(work);
 		wq_enqueue(&bmh->active_wq, work);
 	}
 	mutex_unlock(&bmh->lock);
@@ -355,7 +700,9 @@ static bool BMH_queue_full(struct cgpu_info *cgpu)
 
 static void BMH_flush_work(struct cgpu_info *cgpu)
 {
+	struct BMH_chain *bmh = cgpu->device_data;
 	applog(LOG_DEBUG, "BMH_flush_work");
+
 }
 
 struct device_drv bmhasher_drv = {

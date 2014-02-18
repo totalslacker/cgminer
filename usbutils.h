@@ -50,6 +50,10 @@
 
 #define FTDI_VALUE_DATA_AVA 8
 
+// BMHasher
+#define FTDI_VALUE_BAUD_BMH 0x001A
+#define FTDI_INDEX_BAUD_BMH 0x0000
+
 // BitBurner
 #define BITBURNER_REQUEST ((uint8_t)0x42)
 #define BITBURNER_VALUE 0x4242
@@ -385,7 +389,8 @@ struct cg_usb_info {
 	USB_ADD_COMMAND(C_HF_NOTICE, "HFNotice") \
 	USB_ADD_COMMAND(C_HF_GETHEADER, "HFGetHeader") \
 	USB_ADD_COMMAND(C_HF_GETDATA, "HFGetData") \
-	USB_ADD_COMMAND(C_HF_CLEAR_READ, "HFClearRead")
+	USB_ADD_COMMAND(C_HF_CLEAR_READ, "HFClearRead") \
+	USB_ADD_COMMAND(C_BMHASHER, "BMHasher")
 
 /* Create usb_cmds enum from USB_PARSE_COMMANDS macro */
 enum usb_cmds {
