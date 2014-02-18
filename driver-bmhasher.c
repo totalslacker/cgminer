@@ -259,6 +259,7 @@ int ReceivePacket(struct BMH_chain * bmh, BMPacket * packet)
 
 		if (err >= 0 && rxLength == sizeof(BMPacketHeader))
 		{
+			applog(LOG_DEBUG, "ReceivePacket: header received");
 			break;
 		}
 		if ((err < 0 && err != LIBUSB_ERROR_TIMEOUT))
@@ -284,12 +285,13 @@ int ReceivePacket(struct BMH_chain * bmh, BMPacket * packet)
 	if (packet->header.length > 0)
 	{
 		// this should come through pretty quickly...
-		for (int i = 0; i < 3; i++)
+		for (int i = 0; i < 60; i++)
 		{
-			err = usb_read_ok_timeout(bmh->cgpu, (char *) packet, packet->header.length, &rxLength, 10, C_BMHASHER);
+			err = usb_read_ok_timeout(bmh->cgpu, (char *) packet->payload, packet->header.length, &rxLength, 10, C_BMHASHER);
 
-			if (err >= 0 && rxLength == packet->header.length)
+			if (err >= 0 && rxLength >= packet->header.length)
 			{
+				applog(LOG_DEBUG, "ReceivePacket: payload received");
 				break;
 			}
 
@@ -581,10 +583,73 @@ void BMH_detect(bool hotplug)
 	// }
 }
 
+static uint8_t gPacketBuffer[512];
+static BMPacket * gPacket = (BMPacket *) gPacketBuffer;
+
 /* return value is nonces processed since previous call */
 static int64_t BMH_scanwork(struct thr_info *thr)
 {
+	int length;
+	struct cgpu_info *cgpu = thr->cgpu;
+	struct BMH_chain *bmh = cgpu->device_data;
+	
+	mutex_lock(&bmh->lock);
+
 	applog(LOG_DEBUG, "BMH_scanwork");
+
+	struct work *work = wq_dequeue(&bmh->active_wq);
+	assert(work != NULL);
+
+	WorkPacket * workPacket = (WorkPacket *) gPacket;
+	unsigned char *midstate = work->midstate;
+	unsigned char *wdata = work->data + 64;
+
+	// now send down the work
+	applog(LOG_DEBUG, "BMH_scanwork: sending work packet");
+	workPacket->header.type = kWorkPacketType;
+	workPacket->header.length = 44;
+	memcpy(workPacket->midstate, midstate, 32);
+	memcpy(workPacket->data, wdata, 12);
+	SendPacket(bmh, 0, gPacket);
+
+	applog(LOG_DEBUG, "BMH_scanwork: waiting response packet");
+	length = ReceivePacket(bmh, gPacket);
+	applog(LOG_DEBUG, "BMH_scanwork: length=%d", length);
+	if (length >= 0)
+	{
+		applog(LOG_DEBUG, "BMH_scanwork: type=%d length=%d", gPacket->header.type, gPacket->header.length);
+		hexdump("recevied packet", (uint8_t *) gPacket, length);
+
+		if (gPacket->header.type == kRequestNoncesPacketType)
+		{
+			StatusResponsePacket * responsePacket = (StatusResponsePacket *) gPacket;
+
+			applog(LOG_DEBUG, "BMH_scanwork: nonceCount=%d", responsePacket->nonceCount);
+			applog(LOG_DEBUG, "BMH_scanwork: remainingNonces=%d", responsePacket->remainingNonces);
+			applog(LOG_DEBUG, "BMH_scanwork: desiredWork=%d", responsePacket->desiredWork);
+
+			for (int count = 0; count < responsePacket->nonceCount; count++)
+			{
+				uint32_t nonce = bswap_32(responsePacket->nonces[count]);
+
+				applog(LOG_DEBUG, "BMH_scanwork: nonce=0x%08x", nonce);
+
+				if (!submit_nonce(thr, work, nonce)) {
+					applog(LOG_WARNING, "chip %d: invalid nonce 0x%08x",
+					       0, nonce);
+					// chip->hw_errors++;
+					 // add a penalty of a full nonce range on HW errors 
+					// nonce_ranges_processed--;
+					continue;
+				}
+				applog(LOG_DEBUG, "YEAH: chip %d: nonce 0x%08x",
+				       0, nonce);
+				// chip->nonces_found++;
+			}
+		}
+	}
+
+	mutex_unlock(&bmh->lock);
 
 	return 0;
 }
@@ -648,9 +713,7 @@ static void testwork(struct work * work)
 	hexdump("HASH: ", hash_8, 32);
 }
 
-static bool doneOnce = false;
-static uint8_t gPacketBuffer[512];
-static BMPacket * gPacket = (BMPacket *) gPacketBuffer;
+static bool doneOnce = true;
 
 /* queue two work items per chip in chain */
 static bool BMH_queue_full(struct cgpu_info *cgpu)
